@@ -662,6 +662,7 @@ class DummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
         env = self.envs[0]
+
         ShareVecEnv.__init__(self, len(
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
@@ -670,8 +671,12 @@ class DummyVecEnv(ShareVecEnv):
         self.actions = actions
 
     def step_wait(self):
-        results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
-        obs, rews, dones, infos = map(np.array, zip(*results))
+        # Comment Janek: taking care of the fact that we only have one env and one set of actions
+        #original:  results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
+        results = [self.envs[0].step(self.actions)]
+
+        # Comment Janek: ignoring the truncated variable of the gymnasium API returned by our Wrapper. Maybe makes sense to just not return it?
+        obs, rews, dones, _, infos = map(np.array, zip(*results))
 
         for (i, done) in enumerate(dones):
             if 'bool' in done.__class__.__name__:

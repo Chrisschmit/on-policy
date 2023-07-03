@@ -78,8 +78,11 @@ class DiagGaussian(nn.Module):
 
         self.fc_mean = init_(nn.Linear(num_inputs, num_outputs))
         self.logstd = AddBias(torch.zeros(num_outputs))
+        print("Diag_init done !")
 
-    def forward(self, x):
+    #Edit in our fork: X is considered as tuple  
+    def forward(self, *x):
+        x = x[0]
         action_mean = self.fc_mean(x)
 
         #  An ugly hack for my KFAC implementation.
