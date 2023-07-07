@@ -6,6 +6,8 @@ import torch
 from multiprocessing import Process, Pipe
 from abc import ABC, abstractmethod
 from onpolicy.utils.util import tile_images
+from typing import Optional, Sequence, Union, List
+
 
 class CloudpickleWrapper(object):
     """
@@ -43,6 +45,8 @@ class ShareVecEnv(ABC):
         self.observation_space = observation_space
         self.share_observation_space = share_observation_space
         self.action_space = action_space
+        # seeds to be used in the next call to env.reset()
+        self._seeds: List[Optional[int]] = [None for _ in range(num_envs)]
 
     @abstractmethod
     def reset(self):
@@ -117,6 +121,25 @@ class ShareVecEnv(ABC):
         else:
             raise NotImplementedError
 
+    def seed(self, seed: Optional[int] = None) -> Sequence[Union[None, int]]:
+        """
+        Sets the random seeds for all environments, based on a given seed.
+        Each individual environment will still get its own seed, by incrementing the given seed.
+        WARNING: since gym 0.26, those seeds will only be passed to the environment
+        at the next reset.
+
+        :param seed: The random seed. May be None for completely random seeding.
+        :return: Returns a list containing the seeds for each individual env.
+            Note that all list elements may be None, if the env does not return anything when being seeded.
+        """
+        if seed is None:
+            # To ensure that subprocesses have different seeds,
+            # we still populate the seed variable when no argument is passed
+            seed = np.random.randint(0, 2**32 - 1)
+
+        self._seeds = [seed + idx for idx in range(self.num_envs)]
+        return self._seeds
+
     def get_images(self):
         """
         Return RGB images from each environment
@@ -135,6 +158,12 @@ class ShareVecEnv(ABC):
             from gym.envs.classic_control import rendering
             self.viewer = rendering.SimpleImageViewer()
         return self.viewer
+
+    def _reset_seeds(self) -> None:
+        """
+        Reset the seeds that are going to be used at the next reset.
+        """
+        self._seeds = [None for _ in range(self.num_envs)]
 
 
 def worker(remote, parent_remote, env_fn_wrapper):
@@ -676,7 +705,10 @@ class DummyVecEnv(ShareVecEnv):
         results = [self.envs[0].step(self.actions)]
 
         # Comment Janek: ignoring the truncated variable of the gymnasium API returned by our Wrapper. Maybe makes sense to just not return it?
-        obs, rews, dones, _, infos = map(np.array, zip(*results))
+        def to_numpy_array(x):
+            return np.array(x, dtype=object)
+
+        obs, rews, dones, _, infos = map(to_numpy_array, zip(*results))
 
         for (i, done) in enumerate(dones):
             if 'bool' in done.__class__.__name__:
@@ -690,8 +722,10 @@ class DummyVecEnv(ShareVecEnv):
         return obs, rews, dones, infos
 
     def reset(self):
-        obs = [env.reset() for env in self.envs]
-        return np.array(obs)
+        obs = [env.reset(seed=self._seeds[env_idx]) for env_idx, env in enumerate(self.envs)]
+        # Seeds are only used once
+        self._reset_seeds()
+        return np.array(obs, dtype=object)
 
     def close(self):
         for env in self.envs:
