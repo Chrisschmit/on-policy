@@ -6,7 +6,10 @@ import torch
 from multiprocessing import Process, Pipe
 from abc import ABC, abstractmethod
 from onpolicy.utils.util import tile_images
-from typing import Optional, Sequence, Union, List
+from typing import Optional, Sequence, Union, List, Any, Iterable
+import gymnasium as gym
+
+VecEnvIndices = Union[None, int, Iterable[int]]
 
 
 class CloudpickleWrapper(object):
@@ -696,6 +699,9 @@ class DummyVecEnv(ShareVecEnv):
             env_fns), env.observation_space, env.share_observation_space, env.action_space)
         self.actions = None
 
+    @property
+    def unwrapped(self):
+        return self.envs[0]
     def step_async(self, actions):
         self.actions = actions
 
@@ -739,6 +745,39 @@ class DummyVecEnv(ShareVecEnv):
                 env.render(mode=mode)
         else:
             raise NotImplementedError
+
+    def get_attr(self, attr_name: str, indices: VecEnvIndices = None) -> List[Any]:
+        """Return attribute from vectorized environment (see base class)."""
+        target_envs = self._get_target_envs(indices)
+        return [getattr(env_i, attr_name) for env_i in target_envs]
+
+    def set_attr(self, attr_name: str, value: Any, indices: VecEnvIndices = None) -> None:
+        """Set attribute inside vectorized environments (see base class)."""
+        target_envs = self._get_target_envs(indices)
+        for env_i in target_envs:
+            setattr(env_i, attr_name, value)
+
+    def env_method(self, method_name: str, *method_args, indices: VecEnvIndices = None, **method_kwargs) -> List[Any]:
+        """Call instance methods of vectorized environments."""
+        target_envs = self._get_target_envs(indices)
+        return [getattr(env_i, method_name)(*method_args, **method_kwargs) for env_i in target_envs]
+
+    def _get_target_envs(self, indices: VecEnvIndices) -> List[gym.Env]:
+        indices = self._get_indices(indices)
+        return [self.envs[i] for i in indices]
+
+    def _get_indices(self, indices: VecEnvIndices) -> Iterable[int]:
+        """
+        Convert a flexibly-typed reference to environment indices to an implied list of indices.
+
+        :param indices: refers to indices of envs.
+        :return: the implied list of indices.
+        """
+        if indices is None:
+            indices = range(self.num_envs)
+        elif isinstance(indices, int):
+            indices = [indices]
+        return indices
 
 
 
